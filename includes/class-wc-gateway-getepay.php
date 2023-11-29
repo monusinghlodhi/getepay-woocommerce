@@ -50,7 +50,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$this->iv = $this->get_option("iv");
 
 		$this->title = $this->get_option('title');
-		//$this->response_url = add_query_arg('wc-api', 'WC_Gateway_Getepay', home_url('/'));
+		$this->response_url = add_query_arg('wc-api', 'wc-gateway-getepay', home_url('/'));
 		$this->send_debug_email = 'yes' === $this->get_option('send_debug_email');
 		$this->description = $this->get_option('description');
 		$this->instructions = $this->get_option('instructions', $this->description);
@@ -70,12 +70,13 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 			$this->send_debug_email = false;
 		}
 
-		//add_action('woocommerce_api_wc_gateway_getepay', array($this, 'check_itn_response'));
+		//add_action('woocommerce_api_wc-gateway-getepay', array($this, 'getepay_check_response'));
 		add_action('getepay_check_response', array($this, 'getepay_check_response'));
 		add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
-		add_action('woocommerce_receipt_' . $this->id, array($this, 'pay_for_order'));
-		//add_action('woocommerce_receipt_' . $this->id, array($this, 'receipt_page'));
+		//add_action('woocommerce_receipt_' . $this->id, array($this, 'pay_for_order'));
+		add_action('woocommerce_receipt_' .$this->id, array($this, 'receipt_page'));
 		add_action('admin_notices', array($this, 'admin_notices'));
+		add_action('admin_footer', array($this, 'add_text_to_payment_gateway_settings'));
 	}
 
 	/**
@@ -420,6 +421,31 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$this->pay_for_order($order);
 	}
 
+
+    /**
+     * Add text at the bottom of WooCommerce Getepay payment gateway settings page.
+     */
+	public function add_text_to_payment_gateway_settings()
+	{
+		// Check if the current tab is the Getepay payment tab
+		$current_tab = isset($_GET['section']) ? sanitize_text_field($_GET['section']) : '';
+	
+		if ($current_tab === 'getepay_gateway') {
+			echo '<div class="getepay-logo" style="text-align: right;">';
+			echo '
+			<footer class="footer">
+				<div class="row">
+					<div class="col-sm-12 text-right mb-2 footer-logo">
+						<p style="display: inline-block; margin-right: 10px; font-weight: bold;">&copy;' . date('Y') . ' Powered By</p>
+						<img src="' . esc_url($this->icon) . '" width="50" height="50" style="vertical-align: middle;">
+					</div>
+				</div>
+			</footer>';
+			echo '</div>';
+		}
+	}
+	
+	
 	/**
 	 * Check Getepay response.
 	 *
