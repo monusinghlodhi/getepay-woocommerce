@@ -74,7 +74,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		add_action('getepay_check_response', array($this, 'getepay_check_response'));
 		add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
 		add_action('woocommerce_receipt_' . $this->id, array($this, 'pay_for_order'));
-		//add_action('woocommerce_receipt_getepay', array($this, 'receipt_page'));
+		//add_action('woocommerce_receipt_' . $this->id, array($this, 'receipt_page'));
 		add_action('admin_notices', array($this, 'admin_notices'));
 	}
 
@@ -417,7 +417,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	public function receipt_page($order)
 	{
 		echo '<p>' . esc_html__('Thank you for your order, please click the button below to pay with Getepay.', 'woocommerce-getepay-payment') . '</p>';
-		$this->generate_payfast_form($order);
+		$this->pay_for_order($order);
 	}
 
 	/**
