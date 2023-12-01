@@ -25,7 +25,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	{
 		$this->version = WC_GATEWAY_GETEPAY_VERSION;
 		$this->id = 'getepay_gateway';
-		$this->has_fields = false;
+		$this->has_fields = true;
 		$this->method_title = __('Getepay', 'woocommerce-getepay-payment');
 		/* translators: 1: a href link 2: closing href */
 		$this->method_description = sprintf(__('This Plugin utilizes %1$sGetepay%2$s API and provides seamless integration with Woocommerce, allowing payments for Indian merchants via Credit Cards, Debit Cards, Net Banking, without redirecting away from the Woocommerce site.', 'woocommerce-getepay-payment'), '<a href="https://getepay.in/" target="_blank">', '</a>');
@@ -33,6 +33,11 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$this->debug_email = get_option('admin_email');
 		$this->available_countries = array('IN');
 		$this->available_currencies = (array) apply_filters('woocommerce_gateway_getepay_available_currencies', array('INR'));
+
+		// Supported functionality
+        $this->supports   = array(
+            'products',
+        );
 
 		$this->init_form_fields();
 		$this->init_settings();
@@ -50,7 +55,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$this->iv = $this->get_option("iv");
 
 		$this->title = $this->get_option('title');
-		$this->response_url = add_query_arg('wc-api', 'wc-gateway-getepay', home_url('/'));
+		$this->response_url = add_query_arg('wc-api', 'WC_Gateway_Getepay', home_url('/'));
 		$this->send_debug_email = 'yes' === $this->get_option('send_debug_email');
 		$this->description = $this->get_option('description');
 		$this->instructions = $this->get_option('instructions', $this->description);
@@ -70,8 +75,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 			$this->send_debug_email = false;
 		}
 
-		//add_action('woocommerce_api_wc-gateway-getepay', array($this, 'getepay_check_response'));
-		add_action('getepay_check_response', array($this, 'getepay_check_response'));
+		add_action('woocommerce_api_wc_gateway_getepay', array($this, 'getepay_check_response'));
+		//add_action('getepay_check_response', array($this, 'getepay_check_response'));
 		add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
 		//add_action('woocommerce_receipt_' . $this->id, array($this, 'pay_for_order'));
 		add_action('woocommerce_receipt_' .$this->id, array($this, 'receipt_page'));
@@ -317,7 +322,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 			$terminalId = $this->terminalId;
 			$key = $this->key;
 			$iv = $this->iv;
-			$ru = esc_url_raw( add_query_arg( 'utm_nooverride', '1', $this->get_return_url( $order ) ) );
+			//$ru = esc_url_raw( add_query_arg( 'utm_nooverride', '1', $this->get_return_url( $order ) ) );
+			$ru = $this->response_url;
 			$amt = $order->get_total();
 			$udf1 = self::get_order_prop($order, 'billing_first_name') . " " . self::get_order_prop($order, 'billing_last_name');
 			$udf2 = $order->get_billing_phone();
@@ -455,11 +461,13 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	{
 		// phpcs:ignore.WordPress.Security.NonceVerification.Missing
 		$this->handle_getepay_request(stripslashes_deep($_POST));
-
+		// header( 'HTTP/1.0 200 OK' );
+		header( 'HTTP/1.1 400 OK' );
+		flush();
 	}
 
 	/**
-	 * Check Getepay ITN validity.
+	 * Check Getepay Payment Response.
 	 *
 	 * @param array $data Data.
 	 * @since 1.0.0
@@ -493,9 +501,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$order_key = wc_clean($session_id);
 		$order = wc_get_order($order_id);
 		$original_order = $order;
-		$user_id = $order->get_user_id();
-		wp_set_current_user($user_id);
-
+	
 		if (false === $data) {
 			$getepay_error = true;
 			$getepay_error_message = GE_ERR_BAD_ACCESS;
@@ -641,6 +647,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	public function handle_getepay_payment_complete($json, $order)
 	{
 		global $woocommerce;
+		$user_id = $order->get_user_id();
+		wp_set_current_user($user_id);
 		$getepayTxnId = $json['getepayTxnId'];
 		$this->log("- Getepay payment successful, Getepay Txn Id: $getepayTxnId");
 		$order->add_order_note("Getepay payment successful <br/>Getepay Txn Id: $getepayTxnId");
@@ -662,6 +670,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 				. 'Order Status Code: ' . self::get_order_prop($order, 'status');
 			wp_mail($debug_email, $subject, $body);
 		}
+		wp_redirect($this->get_return_url( $order ));
+		exit;
 	}
 
 	/**
@@ -671,6 +681,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	public function handle_getepay_payment_failed($json, $order)
 	{
 		$getepayTxnId = $json['getepayTxnId'];
+		$user_id = $order->get_user_id();
+		wp_set_current_user($user_id);
 		$this->log("- Getepay payment failed, Getepay Txn Id: $getepayTxnId");
 		$order->update_status('failed', sprintf(__("Getepay payment %s <br/>Getepay Txn Id: $getepayTxnId.<br/>", "woocommerce-getepay-payment"), strtolower(sanitize_text_field($json['paymentStatus']))));
 		$debug_email = $this->get_option('debug_email', get_option('admin_email'));
@@ -690,6 +702,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 				'Getepay Payment Status: ' . esc_html($json['paymentStatus']);
 			wp_mail($debug_email, $subject, $body);
 		}
+		wp_redirect($this->get_return_url( $order ));
+		exit;
 	}
 
 	/**
@@ -700,6 +714,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	public function handle_getepay_payment_pending($json, $order)
 	{
 		$getepayTxnId = $json['getepayTxnId'];
+		$user_id = $order->get_user_id();
+		wp_set_current_user($user_id);
 		$this->log("- Getepay payment pending, Getepay Txn Id: $getepayTxnId");
 		// Need to wait for "Completed" before processing
 		/* translators: 1: payment status */
@@ -721,6 +737,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 				'Getepay Payment Status: ' . esc_html($json['paymentStatus']);
 			wp_mail($debug_email, $subject, $body);
 		}
+		wp_redirect($this->get_return_url( $order ));
+		exit;
 	}
 
 	/**
@@ -912,18 +930,4 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 				. '</ul></p></div>';
 		}
 	}
-}
-
-add_action('init', 'getepay_check_for_response');
-function getepay_check_for_response()
-{
-	global $woocommerce;
-
-	if (isset($_POST['status']) && isset($_POST["mid"]) && isset($_POST["response"])) {
-
-		// Start the gateways
-		WC()->payment_gateways();
-		do_action('getepay_check_response');
-	}
-
 }
