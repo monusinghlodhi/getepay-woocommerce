@@ -302,24 +302,26 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
      * @param int $timeout Timeout value.
      * @return bool
      */
-    private function is_port_open($ip, $port, $timeout = 1)
-    {
-		// Skip localhost IP
-		$local_ips = ['127.0.0.1', '::1']; // Add more loopback IPs if needed
+	private function is_port_open($ip, $port, $timeout = 1)
+	{
+		$local_ips = ['127.0.0.1', '::1', 'fe80::1', '::ffff:127.0.0.1'];
 
 		if (in_array($ip, $local_ips)) {
+			// You may add specific port check logic for localhost here if needed
 			return true;
 		}
 
-        $socket = @fsockopen($ip, $port, $errno, $errstr, $timeout);
-
-        if ($socket) {
-            fclose($socket);
-            return true;
-        } else {
-            return false;
-        }
-    }
+		try {
+			$socket = @fsockopen($ip, $port, $errno, $errstr, $timeout);
+			if ($socket === false) {
+				return false;
+			}
+			fclose($socket);
+			return true;
+		} catch (Exception $e) {
+			return false;
+		}
+	}
 
 	/**
 	 * Admin Panel Options
@@ -373,19 +375,23 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	 */
 	public function pay_for_order($order_id)
 	{
+		try {
 			$order = wc_get_order($order_id);
 			$order->update_status('pending-payment', __('Awaiting payment.', 'woocommerce-getepay-payment'));
+
+			// Get plugin settings
 			$url = $this->req_url;
 			$mid = $this->mid;
 			$terminalId = $this->terminalId;
 			$key = $this->key;
 			$iv = $this->iv;
-			//$ru = esc_url_raw( add_query_arg( 'utm_nooverride', '1', $this->get_return_url( $order ) ) );
 			$ru = $this->response_url;
 			$amt = $order->get_total();
 			$udf1 = self::get_order_prop($order, 'billing_first_name') . " " . self::get_order_prop($order, 'billing_last_name');
 			$udf2 = $order->get_billing_phone();
 			$udf3 = self::get_order_prop($order, 'billing_email');
+
+			// Prepare request data
 			$request = array(
 				"mid" => $mid,
 				"amount" => $amt,
@@ -412,62 +418,69 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 				"txnNote" => sprintf(esc_html__('New order from %s', 'woocommerce-getepay-payment'), get_bloginfo('name')),
 				"vpa" => $terminalId,
 			);
-			$json_requset = json_encode($request);
+
+			// Encrypt the request
+			$json_request = json_encode($request);
 			$key = base64_decode($key);
 			$iv = base64_decode($iv);
-			// Encryption Code //
-			$ciphertext_raw = openssl_encrypt($json_requset, "AES-256-CBC", $key, $options = OPENSSL_RAW_DATA, $iv);
+			$ciphertext_raw = openssl_encrypt($json_request, "AES-256-CBC", $key, OPENSSL_RAW_DATA, $iv);
 			$ciphertext = bin2hex($ciphertext_raw);
-			$newCipher = strtoupper($ciphertext);
-			//print_r($newCipher);exit;
-			$request = array(
+			$new_request = array(
 				"mid" => $mid,
 				"terminalId" => $terminalId,
-				"req" => $newCipher
+				"req" => $ciphertext
 			);
+
+			// Make cURL request
 			$curl = curl_init();
 			curl_setopt($curl, CURLOPT_URL, $url);
-			curl_setopt($curl, CURLINFO_HEADER_OUT, true);
-			curl_setopt(
-				$curl,
-				CURLOPT_HTTPHEADER,
-				array(
-					'Content-Type:application/json',
-				)
-			);
+			curl_setopt($curl, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
 			curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
 			curl_setopt($curl, CURLOPT_POST, true);
-			curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($request));
-			$result = curl_exec($curl);
-			curl_close($curl);
-			$jsonDecode = json_decode($result);
-			$jsonResult = $jsonDecode->response;
-			$ciphertext_raw = hex2bin($jsonResult);
-			$original_plaintext = openssl_decrypt($ciphertext_raw, "AES-256-CBC", $key, $options = OPENSSL_RAW_DATA, $iv);
-			$json = json_decode($original_plaintext);
-			if($json){
-			$paymentId = $json->paymentId;
-			$pgUrl = $json->paymentUrl;
-			// Update the custom field "Getepay PaymentId" for the order
-			//update_post_meta($order_id, 'GetepaypPaymentId', $paymentId);
-			$order->update_meta_data('GetepaypPaymentId', $paymentId);
-			$order->save();
-			wp_redirect($pgUrl);
-			}else{
-				$settings_url = add_query_arg(
-					array(
-						'page' => 'wc-settings',
-						'tab' => 'checkout',
-						'section' => 'getepay_gateway',
-					),
-					admin_url( 'admin.php' )
-				);
-				
-				echo '<p>' . esc_html__('Check Your Getepay Config. Data is correct or not.', 'woocommerce-getepay-payment') . '</p>';
-				echo '<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Configure here', 'woocommerce-getepay-payment' ) . '</a>';
-			}
-	}
+			curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($new_request));
 
+			$result = curl_exec($curl);
+
+			if ($result === false) {
+				throw new Exception('cURL error: ' . curl_error($curl));
+			}
+
+			curl_close($curl);
+
+			// Decode and process the response
+			$json_decode = json_decode($result);
+
+			if (!$json_decode || !isset($json_decode->response)) {
+				throw new Exception('Invalid or missing response from Getepay.');
+			}
+
+			$json_result = $json_decode->response;
+			$ciphertext_raw = hex2bin($json_result);
+			$original_plaintext = openssl_decrypt($ciphertext_raw, "AES-256-CBC", $key, OPENSSL_RAW_DATA, $iv);
+			$json = json_decode($original_plaintext);
+				// Process successful response
+				$paymentId = $json->paymentId;
+				$pgUrl = $json->paymentUrl;
+				// Update the custom field "Getepay PaymentId" for the order
+				$order->update_meta_data('GetepaypPaymentId', $paymentId);
+				$order->save();
+				wp_redirect($pgUrl);
+				exit;
+		} catch (Exception $e) {
+			// Handle unsuccessful response
+			$settings_url = add_query_arg(
+				array(
+					'page' => 'wc-settings',
+					'tab' => 'checkout',
+					'section' => 'getepay_gateway',
+				),
+				admin_url('admin.php')
+			);
+			// Handle exceptions, log them, or display an error message.
+			echo '<p>' . esc_html__('Error processing payment:', 'woocommerce-getepay-payment') . ' ' . esc_html($e->getMessage()) . '</p>';
+			echo '<b>NOTE:</b> Check your Getepay configuration. Verify if details are correct or not. <a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Configure here', 'woocommerce-getepay-payment' ) . '</a>';
+		}
+	}
 
 	/**
 	 * Process the payment and return the result
