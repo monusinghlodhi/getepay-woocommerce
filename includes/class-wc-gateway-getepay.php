@@ -34,6 +34,10 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$this->available_countries = array('IN');
 		$this->available_currencies = (array) apply_filters('woocommerce_gateway_getepay_available_currencies', array('INR'));
 
+		// Check if port 8443 is open on the specified domain
+		$domain = parse_url(get_site_url(), PHP_URL_HOST); // Extract the host from the URL
+		$this->domain_ip = gethostbyname($domain);
+
 		// Supported functionality
         $this->supports   = array(
             'products',
@@ -73,6 +77,16 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 			$this->add_testmode_admin_settings_notice();
 		} else {
 			$this->send_debug_email = false;
+		}
+
+		$components = parse_url($this->req_url);
+		if (isset($components['port'])) {
+			$this->getepay_req_url_port = $components['port'];
+			//$this->getepay_req_url_port = '8025';
+		} else {
+			//echo "No specific port specified; defaulting to standard HTTPS port (443)";
+			//$this->getepay_req_url_port = "8025";
+			$this->getepay_req_url_port = '80';
 		}
 
 		add_action('woocommerce_api_wc_gateway_getepay', array($this, 'getepay_check_response'));
@@ -245,6 +259,8 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$errors = [
 			// Check if the store currency is supported by Getepay
 			!in_array(get_woocommerce_currency(), $this->available_currencies) ? 'wc-gateway-getepay-error-invalid-currency' : null,
+			// Check if the HOST 8443 PORT is open or not
+			!$this->is_port_open($this->domain_ip, $this->getepay_req_url_port) ? 'wc-gateway-getepay-error-port' : null,
 			// Check if user entered the merchant ID
 			'yes' !== $this->get_option('testmode') && empty($this->get_option('req_url')) ? 'wc-gateway-getepay-error-missing-request-url' : null,
 			// Check if user entered the merchant ID
@@ -279,6 +295,33 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	}
 
 	/**
+     * Check if a specific port is open on the given IP.
+     *
+     * @param string $ip IP address.
+     * @param int $port Port number.
+     * @param int $timeout Timeout value.
+     * @return bool
+     */
+    private function is_port_open($ip, $port, $timeout = 1)
+    {
+		// Skip localhost IP
+		$local_ips = ['127.0.0.1', '::1']; // Add more loopback IPs if needed
+
+		if (in_array($ip, $local_ips)) {
+			return true;
+		}
+
+        $socket = @fsockopen($ip, $port, $errno, $errstr, $timeout);
+
+        if ($socket) {
+            fclose($socket);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+	/**
 	 * Admin Panel Options
 	 * - Options for bits like 'title' and availability on a country-by-country basis
 	 *
@@ -286,13 +329,14 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	 */
 	public function admin_options()
 	{
-		if (in_array(get_woocommerce_currency(), $this->available_currencies, true)) {
+		if (in_array(get_woocommerce_currency(), $this->available_currencies, true) && $this->is_port_open($this->domain_ip, $this->getepay_req_url_port)) {
 			parent::admin_options();
 		} else {
 			?>
 			<h3>
 				<?php esc_html_e('Getepay', 'woocommerce-getepay-payment'); ?>
 			</h3>
+			<?php if (!in_array(get_woocommerce_currency(), $this->available_currencies, true)) { ?>
 			<div class="inline error">
 				<p>
 					<strong>
@@ -304,6 +348,20 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 					?>
 				</p>
 			</div>
+			<?php } ?>
+			<?php if (!$this->is_port_open($this->domain_ip, $this->getepay_req_url_port)) { ?>
+			<div class="inline error">
+				<p>
+					<strong>
+						<?php esc_html_e('Gateway Disabled', 'woocommerce-getepay-payment'); ?>
+					</strong>
+					<?php
+					/* translators: 1: a href link 2: closing href */
+					echo wp_kses_post(sprintf(__("Port 8443 is closed on the WordPress site HOST: $this->domain_ip", 'woocommerce-getepay-payment'), '<a href="' . esc_url(admin_url('admin.php?page=wc-settings&tab=general')) . '">', '</a>'));
+					?>
+				</p>
+			</div>
+			<?php } ?>
 			<?php
 		}
 	}
@@ -387,12 +445,27 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 			$ciphertext_raw = hex2bin($jsonResult);
 			$original_plaintext = openssl_decrypt($ciphertext_raw, "AES-256-CBC", $key, $options = OPENSSL_RAW_DATA, $iv);
 			$json = json_decode($original_plaintext);
-			//echo "<pre/>"; print_r($json);
+			if($json){
 			$paymentId = $json->paymentId;
 			$pgUrl = $json->paymentUrl;
 			// Update the custom field "Getepay PaymentId" for the order
-			update_post_meta($order_id, 'GetepaypPaymentId', $paymentId);
+			//update_post_meta($order_id, 'GetepaypPaymentId', $paymentId);
+			$order->update_meta_data('GetepaypPaymentId', $paymentId);
+			$order->save();
 			wp_redirect($pgUrl);
+			}else{
+				$settings_url = add_query_arg(
+					array(
+						'page' => 'wc-settings',
+						'tab' => 'checkout',
+						'section' => 'getepay_gateway',
+					),
+					admin_url( 'admin.php' )
+				);
+				
+				echo '<p>' . esc_html__('Check Your Getepay Config. Data is correct or not.', 'woocommerce-getepay-payment') . '</p>';
+				echo '<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Configure here', 'woocommerce-getepay-payment' ) . '</a>';
+			}
 	}
 
 
@@ -423,34 +496,39 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	 */
 	public function receipt_page($order)
 	{
-		echo '<p>' . esc_html__('Thank you for your order, please click the button below to pay with Getepay.', 'woocommerce-getepay-payment') . '</p>';
+		echo '<p>' . esc_html__('Redirect to Getepay for payment.', 'woocommerce-getepay-payment') . '</p>';
 		$this->pay_for_order($order);
 	}
 
 
-    /**
-     * Add text at the bottom of WooCommerce Getepay payment gateway settings page.
-     */
-	public function add_text_to_payment_gateway_settings()
-	{
-		// Check if the current tab is the Getepay payment tab
-		$current_tab = isset($_GET['section']) ? sanitize_text_field($_GET['section']) : '';
-	
-		if ($current_tab === 'getepay_gateway') {
-			echo '<div class="getepay-logo" style="text-align: right;">';
-			echo '
-			<footer class="footer">
-				<div class="row">
-					<div class="col-sm-12 text-right mb-2 footer-logo">
-						<p style="display: inline-block; margin-right: 10px; font-weight: bold;">&copy;' . date('Y') . ' Powered By</p>
-						<img src="' . esc_url($this->icon) . '" width="50" height="50" style="vertical-align: middle;">
-					</div>
-				</div>
-			</footer>';
-			echo '</div>';
-		}
-	}
-	
+/**
+ * Add text at the bottom of WooCommerce Getepay payment gateway settings page.
+ */
+public function add_text_to_payment_gateway_settings()
+{
+    // Check if the current tab is the Getepay payment tab
+    $current_tab = isset($_GET['section']) ? sanitize_text_field($_GET['section']) : '';
+
+    // Use a flag to track if the text has been added
+    static $text_added = false;
+
+    if ($current_tab === 'getepay_gateway' && !$text_added) {
+        echo '<div class="getepay-logo" style="text-align: right;">';
+        echo '
+        <footer class="footer">
+            <div class="row">
+                <div class="col-sm-12 text-right mb-2 footer-logo">
+                    <p style="display: inline-block; margin-right: 10px; font-weight: bold;">&copy;' . date('Y') . ' Powered By</p>
+                    <img src="' . esc_url($this->icon) . '" width="50" height="50" style="vertical-align: middle;">
+                </div>
+            </div>
+        </footer>';
+        echo '</div>';
+
+        // Set the flag to true to indicate that the text has been added
+        $text_added = true;
+    }
+}
 	
 	/**
 	 * Check Getepay response.
@@ -463,7 +541,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$this->handle_getepay_request(stripslashes_deep($_POST));
 		// header( 'HTTP/1.0 200 OK' );
 		header( 'HTTP/1.1 400 OK' );
-		flush();
+		//flush();
 	}
 
 	/**
@@ -501,7 +579,7 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		$order_key = wc_clean($session_id);
 		$order = wc_get_order($order_id);
 		$original_order = $order;
-	
+
 		if (false === $data) {
 			$getepay_error = true;
 			$getepay_error_message = GE_ERR_BAD_ACCESS;
@@ -874,14 +952,16 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 		switch ($key) {
 			case 'wc-gateway-getepay-error-invalid-currency':
 				return esc_html__('Your store uses a currency that Getepay doesn\'t support yet.', 'woocommerce-getepay-payment');
+			case 'wc-gateway-getepay-error-port':
+				return esc_html__("PORT 8443 is closed on your site HOST: $this->domain_ip, Please Enable 8443 PORT.", 'woocommerce-getepay-payment');
 			case 'wc-gateway-getepay-error-missing-request-url':
-				return esc_html__('You forgot to fill your Getepay Request URL.', 'woocommerce-getepay-payment');
+				return esc_html__('Getepay requires a Request URL.', 'woocommerce-getepay-payment');
 			case 'wc-gateway-getepay-error-missing-payment-chk-url':
-				return esc_html__('You forgot to fill your Getepay Payment Check URL.', 'woocommerce-getepay-payment');
+				return esc_html__('Getepay requires a Payment Check URL.', 'woocommerce-getepay-payment');
 			case 'wc-gateway-getepay-error-missing-mid':
 				return esc_html__('Getepay requires a MID to work.', 'woocommerce-getepay-payment');
 			case 'wc-gateway-getepay-error-missing-terminal-id':
-				return esc_html__('Getepay requires a ID to work.', 'woocommerce-getepay-payment');
+				return esc_html__('Getepay requires a Terminal ID to work.', 'woocommerce-getepay-payment');
 			case 'wc-gateway-getepay-error-missing-key':
 				return esc_html__('Getepay requires a KEY to work.', 'woocommerce-getepay-payment');
 			case 'wc-gateway-getepay-error-missing-iv':

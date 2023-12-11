@@ -95,11 +95,11 @@ function every_five_minutes_event_func()
 		// Update order status
 		if ($json->txnStatus == "SUCCESS") {
 			//$order->update_status('processing');
-			$order->update_status('processing', sprintf(__('Payment status %s via Getepay after Pending Status.<br/>', 'woocommerce-getepay-payment'), strtolower(sanitize_text_field($json->txnStatus))));
+			$order->update_status('processing', sprintf(__('Payment status %s via Getepay after Pending Status by Getepay Cron".<br/>', 'woocommerce-getepay-payment'), strtolower(sanitize_text_field($json->txnStatus))));
 
 		} elseif ($json->txnStatus == "FAILED") {
 			//$order->update_status('failed');
-			$order->update_status('failed', sprintf(__('Payment status %s via Getepay after Pending Status.<br/>', 'woocommerce-getepay-payment'), strtolower(sanitize_text_field($json->txnStatus))));
+			$order->update_status('failed', sprintf(__('Payment status %s via Getepay after Pending Status by Getepay Cron.<br/>', 'woocommerce-getepay-payment'), strtolower(sanitize_text_field($json->txnStatus))));
 		}
 	}
 }

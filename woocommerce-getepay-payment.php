@@ -55,8 +55,8 @@ function woocommerce_getepay_plugin_links( $links ) {
 
 	$plugin_links = array(
 		'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Configure', 'woocommerce-getepay-payment' ) . '</a>',
-		'<a href="https://www.woocommerce.com/my-account/tickets/">' . esc_html__( 'Support', 'woocommerce-getepay-payment' ) . '</a>',
-		'<a href="https://docs.woocommerce.com/document/getepay-payment-gateway/">' . esc_html__( 'Docs', 'woocommerce-getepay-payment' ) . '</a>',
+		'<a href="https://getepay.in/contact/">' . esc_html__( 'Support', 'woocommerce-getepay-payment' ) . '</a>',
+		'<a href="https://document.getepay.in/">' . esc_html__( 'Docs', 'woocommerce-getepay-payment' ) . '</a>',
 	);
 
 	return array_merge( $plugin_links, $links );
@@ -89,6 +89,19 @@ function woocommerce_getepay_woocommerce_blocks_support()
 		);
 	}
 }
+
+/**
+ * Declares support for HPOS.
+ *
+ * @return void
+ */
+function woocommerce_getepay_declare_hpos_compatibility() {
+	if ( class_exists( '\Automattic\WooCommerce\Utilities\FeaturesUtil' ) ) {
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+	}
+}
+add_action( 'before_woocommerce_init', 'woocommerce_getepay_declare_hpos_compatibility' );
+
 
 /**
  * Display notice if WooCommerce is not installed.
