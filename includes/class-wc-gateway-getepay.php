@@ -458,13 +458,27 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 			$ciphertext_raw = hex2bin($json_result);
 			$original_plaintext = openssl_decrypt($ciphertext_raw, "AES-256-CBC", $key, OPENSSL_RAW_DATA, $iv);
 			$json = json_decode($original_plaintext);
+			$this->log(
+				PHP_EOL
+				. '----------'
+				. PHP_EOL . 'Getepay Payment Request'
+				. PHP_EOL . '----------'
+			);
+			$this->log('Get posted data');
+			$this->log('Getepay Payment Request Data: ' . print_r($json, true));
 				// Process successful response
 				$paymentId = $json->paymentId;
 				$pgUrl = $json->paymentUrl;
 				// Update the custom field "Getepay PaymentId" for the order
 				$order->update_meta_data('GetepaypPaymentId', $paymentId);
-				$order->save();
+				$order->save_meta_data();
 				wp_redirect($pgUrl);
+			$this->log(
+				PHP_EOL
+				. '----------'
+				. PHP_EOL . 'End Getepay Payment Request'
+				. PHP_EOL . '----------'
+			);
 				exit;
 		} catch (Exception $e) {
 			// Handle unsuccessful response
@@ -509,39 +523,39 @@ class WC_Gateway_Getepay extends WC_Payment_Gateway
 	 */
 	public function receipt_page($order)
 	{
-		echo '<p>' . esc_html__('Redirect to Getepay for payment.', 'woocommerce-getepay-payment') . '</p>';
+		echo '<p>' . esc_html__('Redirect to Getepay for payment...', 'woocommerce-getepay-payment') . '</p>';
 		$this->pay_for_order($order);
 	}
 
 
-/**
- * Add text at the bottom of WooCommerce Getepay payment gateway settings page.
- */
-public function add_text_to_payment_gateway_settings()
-{
-    // Check if the current tab is the Getepay payment tab
-    $current_tab = isset($_GET['section']) ? sanitize_text_field($_GET['section']) : '';
+	/**
+	 * Add text at the bottom of WooCommerce Getepay payment gateway settings page.
+	 */
+	public function add_text_to_payment_gateway_settings()
+	{
+		// Check if the current tab is the Getepay payment tab
+		$current_tab = isset($_GET['section']) ? sanitize_text_field($_GET['section']) : '';
 
-    // Use a flag to track if the text has been added
-    static $text_added = false;
+		// Use a flag to track if the text has been added
+		static $text_added = false;
 
-    if ($current_tab === 'getepay_gateway' && !$text_added) {
-        echo '<div class="getepay-logo" style="text-align: right;">';
-        echo '
-        <footer class="footer">
-            <div class="row">
-                <div class="col-sm-12 text-right mb-2 footer-logo">
-                    <p style="display: inline-block; margin-right: 10px; font-weight: bold;">&copy;' . date('Y') . ' Powered By</p>
-                    <img src="' . esc_url($this->icon) . '" width="50" height="50" style="vertical-align: middle;">
-                </div>
-            </div>
-        </footer>';
-        echo '</div>';
+		if ($current_tab === 'getepay_gateway' && !$text_added) {
+			echo '<div class="getepay-logo" style="text-align: right;">';
+			echo '
+			<footer class="footer">
+				<div class="row">
+					<div class="col-sm-12 text-right mb-2 footer-logo">
+						<p style="display: inline-block; margin-right: 10px; font-weight: bold;">&copy;' . date('Y') . ' Powered By</p>
+						<img src="' . esc_url($this->icon) . '" width="50" height="50" style="vertical-align: middle;">
+					</div>
+				</div>
+			</footer>';
+			echo '</div>';
 
-        // Set the flag to true to indicate that the text has been added
-        $text_added = true;
-    }
-}
+			// Set the flag to true to indicate that the text has been added
+			$text_added = true;
+		}
+	}
 	
 	/**
 	 * Check Getepay response.
@@ -550,12 +564,19 @@ public function add_text_to_payment_gateway_settings()
 	 */
 	public function getepay_check_response()
 	{
-		// phpcs:ignore.WordPress.Security.NonceVerification.Missing
-		$this->handle_getepay_request(stripslashes_deep($_POST));
-		// header( 'HTTP/1.0 200 OK' );
-		header( 'HTTP/1.1 400 OK' );
-		//flush();
+		try {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing
+			$this->handle_getepay_request(stripslashes_deep($_POST));
+			// Uncomment the next line if needed
+			// flush();
+			header('HTTP/1.1 200 OK'); // Use '200 OK' for a successful response or choose an appropriate HTTP status code
+		} catch (Exception $e) {
+			// Log and handle unexpected errors
+			$this->log('Unexpected error in getepay_check_response: ' . $e->getMessage());
+			header('HTTP/1.1 500 Internal Server Error');
+		}
 	}
+
 
 	/**
 	 * Check Getepay Payment Response.
@@ -565,18 +586,41 @@ public function add_text_to_payment_gateway_settings()
 	 */
 	public function handle_getepay_request($data)
 	{
-			global $woocommerce;
+		global $woocommerce;
+		try {
+			// Decrypt the response data
 			$key = base64_decode($this->get_option("key"));
 			$iv = base64_decode($this->get_option("iv"));
-			$ciphertext_raw = $ciphertext_raw = hex2bin($data['response']);
+			$ciphertext_raw = hex2bin($data['response']);
 			$original_plaintext = openssl_decrypt($ciphertext_raw, "AES-256-CBC", $key, $options = OPENSSL_RAW_DATA, $iv);
+
+			if ($original_plaintext === false) {
+				throw new Exception('Error decrypting data: ' . openssl_error_string());
+			}
+
 			$json = json_decode(json_decode($original_plaintext, true), true);
 			$txnAmount = $json["txnAmount"];
+
+		} catch (Exception $e) {
+			// Handle decryption errors
+			$this->log('Error decrypting data: ' . $e->getMessage());
+
+			// Log OpenSSL error string if available
+			$opensslError = openssl_error_string();
+			if ($opensslError !== false) {
+				$this->log('OpenSSL error: ' . $opensslError);
+			}
+
+			// Return an appropriate HTTP status code
+			header('HTTP/1.1 400 Bad Request');
+			wp_redirect(home_url('/'));
+			exit;
+		}
 
 		$this->log(
 			PHP_EOL
 			. '----------'
-			. PHP_EOL . 'Getepay Payment call received'
+			. PHP_EOL . 'Getepay Payment response received'
 			. PHP_EOL . '----------'
 		);
 		$this->log('Get posted data');
@@ -628,12 +672,11 @@ public function add_text_to_payment_gateway_settings()
 		// If an error occurred.
 		if ($getepay_error) {
 			$this->log('Error occurred: ' . $getepay_error_message);
-
 			if ($this->send_debug_email) {
 				$this->log('Sending email notification');
 
 				// Send an email.
-				$subject = 'Getepay ITN error: ' . $getepay_error_message;
+				$subject = 'Getepay response error: ' . $getepay_error_message;
 				$body =
 					"Hi,\n\n" .
 					"An invalid Getepay transaction on your website requires attention\n" .
@@ -701,7 +744,7 @@ public function add_text_to_payment_gateway_settings()
 		$this->log(
 			PHP_EOL
 			. '----------'
-			. PHP_EOL . 'End Getepay call'
+			. PHP_EOL . 'End Getepay response'
 			. PHP_EOL . '----------'
 		);
 
